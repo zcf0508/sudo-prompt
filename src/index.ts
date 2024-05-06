@@ -111,15 +111,10 @@ async function Mac(instance: AttemptInstance): Promise<SpawnReturn | undefined> 
   instance.path = path.join(temp, instance.uuid!, `${instance.options.name}.app`);
 
   try {
-    console.log('MacApplet')
     await MacApplet(instance);
-    console.log('MacIcon')
     await MacIcon(instance);
-    console.log('MacPropertyList')
     await MacPropertyList(instance);
-    console.log('MacCommand')
     await MacCommand(instance);
-    console.log('MacOpen')
     return await MacOpen(instance);
   } catch(e) {
     console.log(e)
@@ -158,16 +153,35 @@ async function Windows(instance: AttemptInstance): Promise<SpawnReturn | undefin
   }
 }
 
+function _exec(
+  command: string,
+  options: ExecOptions,
+  callback?: (error?: Error | null, stdout?: string, stderr?: string) => void,
+) {
+  _spawn(command, options).then((res) => {
+    if(!res) {
+      return callback?.(new Error('Command failed'))
+    }
+
+    const { stdout, stderr } = res
+    let out = ''
+    let err = ''
+    stdout?.on('data', (data) => {
+      out += data.toString()
+    })
+    stderr?.on('data', (data) => {
+      err += data.toString()
+    })
+
+    stderr?.on('end', () => {
+      callback?.(null, out, err)
+    })
+  }).catch((error) => {
+    callback?.(error as Error)
+  })
+}
+
 export { 
   _spawn as spawn,
- };
-
-export default (async () => {
-  console.log('1111')
-  const child = await _spawn('echo hello', {name: 'test'})
-  child?.stderr?.on('data', console.log)
-  child?.stdout?.on('data', console.log)
-  setTimeout(() => {
-    console.log('222')
-  }, 2000)
-})()
+  _exec as exec
+};
