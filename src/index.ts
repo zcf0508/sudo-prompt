@@ -1,10 +1,6 @@
-import { exec } from 'child_process';
-import * as crypto from 'crypto';
-import * as fs from 'fs';
+import { spawn } from 'child_process';
 import * as os from 'os';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { promisify } from 'util';
 import {
   EscapeDoubleQuotes,
   LinuxBinary,
@@ -13,63 +9,21 @@ import {
   MacIcon,
   MacOpen,
   MacPropertyList,
-  MacResult,
   Remove,
   UUID,
   ValidName,
   WindowsElevate,
-  WindowsResult,
-  WindowsWaitForStatus,
   WindowsWriteCommandScript,
   WindowsWriteExecuteScript,
 } from './utils';
+import { mkdir } from 'node:fs/promises';
+import { Stream } from 'stream';
+import { AttemptInstance, ExecOptions, SpawnReturn } from './type';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const PERMISSION_DENIED = 'User did not grant permission.';
-const NO_POLKIT_AGENT = 'No polkit authentication agent found.';
-const MAX_BUFFER = 134217728;
-
-async function Attempt(instance: AttemptInstance, callback: (error: Error | null, stdout: string, stderr: string) => void): Promise<void> {
-  const platform = process.platform;
-  if (platform === 'darwin') {
-    await Mac(instance, callback);
-  } else if (platform === 'linux') {
-    await Linux(instance);
-  } else if (platform === 'win32') {
-    await Windows(instance, callback);
-  } else {
-    throw new Error('Platform not yet supported.');
-  }
-}
-
-async function Exec(
+async function _spawn(
   command: string,
-  options: ExecOptions,
-): Promise<[string, string]>;
-async function Exec(
-  command: string,
-  callback: (error: Error | null, stdout: string, stderr: string) => void,
-): Promise<void>;
-async function Exec(
-  command: string,
-  options: ExecOptions,
-  callback: (error: Error | null, stdout: string, stderr: string) => void,
-): Promise<void>;
-async function Exec(
-  command: string,
-  optionsOrCallback: ExecOptions | ((...args: unknown[]) => void),
-  callback?: (error: Error | null, stdout: string, stderr: string) => void,
-): Promise<void | [string, string]> {
-  let options: ExecOptions;
-
-  if (typeof optionsOrCallback === 'function') {
-    callback = optionsOrCallback;
-    options = { name: process.title };
-  } else {
-    options = optionsOrCallback
-  }
+  options: ExecOptions
+): Promise<SpawnReturn | undefined> {
 
   if (!ValidName(options.name)) {
     throw new Error(
@@ -100,29 +54,23 @@ async function Exec(
   };
 
   try {
-    // @ts-ignore
-    await Attempt(instance, callback);
-    const [stdout, stderr] = await Promise.all([
-      promisify(fs.readFile)(instance.path + 'stdout', 'utf-8'),
-      promisify(fs.readFile)(instance.path + 'stderr', 'utf-8'),
-    ]);
+    const platform = process.platform;
+    if (platform === 'darwin') {
+      return await Mac(instance);
+    } else if (platform === 'linux') {
+      return await Linux(instance);
+    } else if (platform === 'win32') {
+      return await Windows(instance);
+    } else {
+      throw new Error('Platform not yet supported.');
+    }
 
-    if (callback) {
-      callback(null, stdout, stderr);
-    } else {
-      return [stdout, stderr];
-    }
   } catch (error) {
-    if (callback) {
-      // @ts-ignore
-      callback(error, '', '');
-    } else {
-      throw error;
-    }
+    throw error;
   }
 }
 
-async function Linux(instance: AttemptInstance): Promise<void> {
+async function Linux(instance: AttemptInstance): Promise<SpawnReturn> {
   const binary = await LinuxBinary();
   const command = [
     `cd "${EscapeDoubleQuotes(process.cwd())}";`,
@@ -150,28 +98,10 @@ async function Linux(instance: AttemptInstance): Promise<void> {
     )}; ${EscapeDoubleQuotes(instance.command)}"`,
   );
 
-  const { stdout, stderr } = await promisify(exec)(command.join(' '), {
-    encoding: 'utf-8',
-    maxBuffer: MAX_BUFFER,
-  });
-
-  const elevated = stdout.slice(0, magic.length) === magic;
-  if (elevated) {
-    // Remove magic string
-    (instance.path as string) += 'stdout';
-    await promisify(fs.writeFile)(instance.path!, stdout.slice(magic.length), 'utf-8');
-  } else {
-    throw new Error(
-      /No authentication agent found/.test(stderr) ? NO_POLKIT_AGENT : PERMISSION_DENIED,
-    );
-  }
-
-  // Write stderr
-  (instance.path as string) += 'stderr';
-  await promisify(fs.writeFile)(instance.path!, stderr, 'utf-8');
+  return spawn(command.join(' '));
 }
 
-async function Mac(instance: AttemptInstance, callback: (error: Error | null, stdout: string, stderr: string) => void): Promise<void> {
+async function Mac(instance: AttemptInstance): Promise<SpawnReturn | undefined> {
   const temp = os.tmpdir();
   if (!temp) throw new Error('os.tmpdir() not defined.');
   const user = process.env.USER;
@@ -181,13 +111,16 @@ async function Mac(instance: AttemptInstance, callback: (error: Error | null, st
   instance.path = path.join(temp, instance.uuid!, `${instance.options.name}.app`);
 
   try {
+    console.log('MacApplet')
     await MacApplet(instance);
+    console.log('MacIcon')
     await MacIcon(instance);
+    console.log('MacPropertyList')
     await MacPropertyList(instance);
+    console.log('MacCommand')
     await MacCommand(instance);
-    await MacOpen(instance);
-    // @ts-ignore
-    MacResult(instance, callback);
+    console.log('MacOpen')
+    return await MacOpen(instance);
   } catch(e) {
     console.log(e)
   }finally {
@@ -195,7 +128,7 @@ async function Mac(instance: AttemptInstance, callback: (error: Error | null, st
   }
 }
 
-async function Windows(instance: AttemptInstance, callback: (error: Error | null, stdout: string, stderr: string) => void): Promise<void> {
+async function Windows(instance: AttemptInstance): Promise<SpawnReturn | undefined> {
   const temp = os.tmpdir();
   if (!temp) throw new Error('os.tmpdir() not defined.');
 
@@ -214,13 +147,10 @@ async function Windows(instance: AttemptInstance, callback: (error: Error | null
   instance.pathStatus = path.join(instance.path, 'status');
 
   try {
-    await promisify(fs.mkdir)(instance.path);
+    await mkdir(instance.path);
     await WindowsWriteExecuteScript(instance);
     await WindowsWriteCommandScript(instance);
-    await WindowsElevate(instance);
-    await WindowsWaitForStatus(instance);
-    // @ts-ignore
-    WindowsResult(instance, callback);
+    return await WindowsElevate(instance);
   } catch(e) {
     console.log(e)
   }finally {
@@ -228,6 +158,16 @@ async function Windows(instance: AttemptInstance, callback: (error: Error | null
   }
 }
 
-export { Exec };
+export { 
+  _spawn as spawn,
+ };
 
-export default Exec('echo hello', {name: 'test'})
+export default (async () => {
+  console.log('1111')
+  const child = await _spawn('echo hello', {name: 'test'})
+  child?.stderr?.on('data', console.log)
+  child?.stdout?.on('data', console.log)
+  setTimeout(() => {
+    console.log('222')
+  }, 2000)
+})()

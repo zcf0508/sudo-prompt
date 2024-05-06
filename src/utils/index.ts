@@ -1,6 +1,7 @@
 import { exec } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { normalize } from 'node:path';
+import { AttemptInstance } from '../type';
 
 export * from './linux';
 export * from './mac';
@@ -17,7 +18,7 @@ export function Remove(path: string) {
     if (typeof path !== 'string' || !path.trim()) {
       return reject(new Error('Argument path not defined.'));
     }
-    var command = [] as string[];
+    const command = [] as string[];
     if (process.platform === 'win32') {
       if (/"/.test(path)) {
         return reject(new Error('Argument path cannot contain double-quotes.'));

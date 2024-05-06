@@ -10,7 +10,7 @@ export function LinuxBinary() {
       if (index === paths.length) {
         return reject(new Error('Unable to find pkexec or kdesudo.'));
       }
-      var path = paths[index++];
+      const path = paths[index++];
       stat(path,
         function(error) {
           if (error) {

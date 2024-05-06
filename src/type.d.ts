@@ -1,4 +1,6 @@
-interface AttemptInstance {
+import { Readable } from "node:stream";
+
+export interface AttemptInstance {
   pathStatus?: string;
   pathStderr?: string;
   pathStdout?: string;
@@ -11,8 +13,13 @@ interface AttemptInstance {
   path: string | undefined;
 }
 
-interface ExecOptions {
+export interface ExecOptions {
   name: string;
   icns?: string;
   env?: Record<string, string>;
+}
+
+export interface SpawnReturn {
+  stdout: Readable;
+  stderr: Readable;
 }
